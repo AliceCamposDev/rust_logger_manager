@@ -1,3 +1,7 @@
+mod domain;
+
+use crate::domain::log_event::BaseLog;
+use serde_json;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
@@ -8,7 +12,7 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     println!("Listening on 127.0.0.1:7878");
 
-    let (tx, rx) = mpsc::channel::<String>();
+    let (tx, rx) = mpsc::channel::<BaseLog>();
 
     thread::spawn(move || {
         let file = OpenOptions::new()
@@ -19,8 +23,9 @@ fn main() {
 
         let mut writer = BufWriter::new(file);
 
-        for msg in rx {
-            writeln!(writer, "{}", msg).unwrap();
+        for log in rx {
+            let json = serde_json::to_string(&log).unwrap();
+            writeln!(writer, "{}", json).unwrap();
             writer.flush().unwrap();
         }
     });
@@ -35,13 +40,21 @@ fn main() {
     }
 }
 
-fn handle_connection(stream: TcpStream, sender: mpsc::Sender<String>) {
+fn handle_connection(stream: TcpStream, sender: mpsc::Sender<BaseLog>) {
     let reader = BufReader::new(stream);
 
     for line in reader.lines() {
         if let Ok(text) = line {
-            if sender.send(text).is_err() {
-                break;
+            match serde_json::from_str::<BaseLog>(&text) {
+                Ok(log) => {
+                    if sender.send(log).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    println!("Deserialize error: {:?}", e);
+                    println!("RAW: {}", text);
+                }
             }
         }
     }
